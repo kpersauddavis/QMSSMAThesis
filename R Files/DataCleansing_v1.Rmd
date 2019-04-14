@@ -1,0 +1,268 @@
+---
+title: "Thesis Data Cleansing"
+author: "Kyle Davis"
+date: "3/9/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.path="images/")
+knitr::opts_knit$set(root.dir = "~/Desktop/QMSSClasses/Spring Classes/Thesis/Datasets")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+setwd("~/Desktop/QMSSClasses/Spring Classes/Thesis/Datasets")
+library(tidyverse)
+library(stargazer)
+```
+
+## NCES Data Cleaning
+
+### Read in Data
+
+#### Setting Path Nodes
+```{r}
+Finance_node <- "NCES/Finance/CSV"
+Directory_node <- "NCES/Institutional Characteristic/Directory Information"
+Fall_node <- "NCES/Institutional Characteristic/Fall Enrollment"
+```
+
+#### Read in Finance Datasets
+
+1) Create List of all CSV files in directory
+2) Initialize Dataframe by reading in first file
+3) Create Year Variable to create a unique ID of UNID + year
+4) Loop through all files and repeat
+
+```{r}
+final_node <- as.character(paste(getwd(),Finance_node, sep = "/")) #location of all of the csv files
+
+finance_files <- list.files(path = final_node) #creates a list of all the files in the specified path
+
+path <- as.character(paste(Finance_node,finance_files[[1]], sep = "/")) #1st CSV file location
+
+finance_data <- read.csv(path) #create the dataframe
+
+year <- str_extract_all(finance_files[[length(finance_files)]], pattern = "[0-9]{2}") #Years are specified for each file as #### where the first two numbers are last year and third/fourth number are this year.
+year <- paste0("20",unlist(year)[[2]]) #set year equal to 20xx
+
+finance_data <- finance_data %>%
+  mutate(year = year) #create year variable in finance_dataset
+
+colnames(finance_data) <- tolower(colnames(finance_data))
+
+for(i in 2:length(finance_files)){
+  path <- as.character(paste(Finance_node,finance_files[[i]], sep = "/"))
+  placeholder <- read.csv(path) #create the dataframe
+
+  year <- str_extract_all(finance_files[[i]], pattern = "[0-9]{2}")
+  year <- paste0("20",unlist(year)[[2]])
+  
+  placeholder <- placeholder %>%
+  mutate(year = year)
+  
+  colnames(placeholder) <- tolower(colnames(placeholder))
+  finance_data <- finance_data %>%
+    plyr::rbind.fill(placeholder)
+}
+
+missing_values <- finance_data %>% summarize_all(funs(sum(is.na(.))/n()))
+missing_values <- gather(missing_values, key = "feature", value = "missing_pct")
+missing_values %>%
+  filter(missing_pct > 0.03) %>%
+ggplot(aes(x=reorder(feature,-missing_pct), y = missing_pct)) +
+geom_bar(stat="identity",fill="red")+
+coord_flip()+theme_bw()
+```
+
+#### Selecting Relevent Variables
+
+```{r}
+varlist_path <- paste0(getwd(),"/NCES/Finance/Finance_Varlist.xlsx")
+varlist <- readxl::read_xlsx(path = varlist_path, sheet = 3)
+
+NCES_varnames <- c(tolower(varlist$varname), 'year')
+
+finance_data <- finance_data %>%
+  dplyr::select_(.dots = NCES_varnames)
+
+colnames(finance_data) <- c(tolower(varlist$dataname), 'year')
+```
+
+
+#### Creating Relevent Vars
+
+#### Endowment Return
+
+```{r}
+finance_data <- finance_data %>%
+  mutate(endowment_ret = endowment_value_ey / endowment_value_by - 1)
+```
+## Data Analysis
+
+### Overview
+
+#### Dataset Size, Shape, Institution Coverage, Year Coverage
+
+```{r}
+ncol(finance_data)
+nrow(finance_data)
+
+finance_data <- finance_data %>%
+  mutate(year = as.numeric(year))
+
+min(finance_data$year)
+max(finance_data$year)
+
+length(unique(finance_data$unitid))
+```
+
+#### Observation count: Per institution, Per Year
+```{r}
+inst <- finance_data %>%
+  group_by(unitid) %>%
+  summarise(count = n())
+library(knitr)
+kable(summary(inst))
+
+year <- finance_data %>% 
+  group_by(year) %>%
+  summarise(count = n())
+
+ggplot(data=year, aes(x=year, y=count)) +
+  geom_bar(stat="identity", fill="steelblue")+
+  geom_text(aes(label=count), vjust=1.6, color="white", size=3.5)+
+  theme_minimal()
+```
+
+#### Plotting Budget Gap
+
+```{r}
+finance_data <- finance_data %>%
+  mutate(endowment_ret = ifelse(endowment_value_by == 0, 0, endowment_ret)) %>%
+  filter(!is.na(endowment_ret)) %>%
+  mutate(budgetgap_noendow = ((total_revenue_investment - (endowment_value_ey - endowment_value_by)) - total_expenses) / total_expenses) %>%
+  mutate(budgetgap_endow = (total_revenue_investment - total_expenses) / total_expenses)
+
+budget <- finance_data %>%
+  select(total_expenses, budgetgap_noendow, budgetgap_endow, year) %>%
+  filter(total_expenses > 0) %>%
+  na.omit() %>%
+  group_by(year) %>%
+  summarize(avg_budgetgap_noendow = mean(budgetgap_noendow), avg_budgetgap_endow = mean(budgetgap_endow))
+
+ggplot(data=budget, aes(x=year, y=avg_budgetgap_endow)) +
+  geom_bar(stat="identity", fill="steelblue")+
+  geom_text(aes(label=round(avg_budgetgap_endow * 100 ,2)), vjust=1.6, color="white", size=3.5)+
+  theme_minimal()
+
+ggplot(data=budget, aes(x=year, y=avg_budgetgap_noendow)) +
+  geom_bar(stat="identity", fill="steelblue")+
+  geom_text(aes(label=round(avg_budgetgap_noendow * 100 ,2)), vjust=1.6, color="white", size=3.5)+
+  theme_minimal()
+```
+
+#### Endowment Revenue as a % of Revenue over time
+```{r}
+finance_data <- finance_data %>%
+  mutate(endow_per_revenue = (endowment_value_ey - endowment_value_by) / total_revenue_investment)
+
+endowper <- finance_data %>%
+  filter(total_revenue_investment > 0) %>%
+  group_by(year) %>%
+  summarize(avg_endowper_revenue = mean(endow_per_revenue))
+
+ggplot(data=endowper, aes(x=year, y=avg_endowper_revenue)) +
+  geom_bar(stat="identity", fill="steelblue")+
+  geom_text(aes(label=round(avg_endowper_revenue * 100 ,2)), color="black", size=3.5)+
+  theme_minimal()
+```
+
+#### Descriptive Stats of relevant vars
+```{r}
+finance_desc <- finance_data %>%
+  select(unitid, total_assets, total_liabilities, total_net_assets, total_revenue_investment, total_expenses, net_tuition_total_revenue, salary_expense, year)
+
+ggplot(data=filter(finance_desc, total_assets/1000000 < 2000), aes(total_assets)) + 
+  geom_histogram(fill = 'steelblue') + theme_minimal() + labs(title = "Total Assets Distribution")
+
+summary(finance_desc$total_assets / 1000000)
+
+```
+
+```{r}
+ggplot(data=filter(finance_desc, total_liabilities / 1000000 < 1000), aes(`total_liabilities` / 1000000)) + 
+  geom_histogram(fill = 'steelblue') + theme_minimal() + labs(title = "Total Liabilities Distribution")
+
+summary(round(finance_desc$total_liabilities))
+
+ggplot(data=filter(finance_desc, total_net_assets/1000000 < 2000), aes(total_net_assets / 1000000)) + 
+  geom_histogram(fill = 'steelblue') + theme_minimal() + labs(title = "Total Net Assets Distribution")
+
+summary(round(finance_desc$total_net_assets))
+
+ggplot(data=filter(finance_desc, total_revenue_investment/1000000 < 1000 | total_revenue_investment/1000000 > -500), aes(total_revenue_investment / 1000000)) + 
+  geom_histogram(fill = 'steelblue') + theme_minimal() + labs(title = "Total Revenue Distribution") + xlim(c(-500,500))
+
+summary(round(finance_desc$total_net_assets))
+
+ggplot(data=filter(finance_desc, total_expenses/1000000 < 2000), aes(total_expenses/ 1000000)) + 
+  geom_histogram(fill = 'steelblue') + theme_minimal() + labs(title = "Total Expenses Distribution")
+
+summary(round(finance_desc$total_expenses))
+
+ggplot(data=filter(finance_desc, net_tuition_total_revenue/1000000 < 2000), aes(net_tuition_total_revenue/ 1000000)) + 
+  geom_histogram(fill = 'steelblue') + theme_minimal() + labs(title = "Total Net Tuition Distribution")
+
+summary(round(finance_desc$net_tuition_total_revenue))
+
+ggplot(data=filter(finance_desc, salary_expense/1000000 < 2000), aes(salary_expense/ 1000000)) + 
+  geom_histogram(fill = 'steelblue') + theme_minimal() + labs(title = "Total Expenses Distribution")
+
+summary(round(finance_desc$salary_expense))
+```
+
+```{r}
+bm_ret <- readxl::read_xlsx("6040Returns.xlsx")
+
+bm_ret <- bm_ret %>%
+  filter(year > 2004) %>%
+  select(year, Blend)
+
+finance_data <- finance_data %>%
+  left_join(bm_ret, by = "year")
+
+finance_desc <- finance_desc %>%
+  left_join(bm_ret, by = "year")
+
+finance_data <- finance_data %>%
+  mutate(risk = ifelse(endowment_ret>Blend & Blend > 0, 1, ifelse(endowment_ret < Blend & Blend < 0, 1,0)))
+
+length(finance_data$risk[finance_data$risk == 1]) / length(finance_data$risk) 
+
+table(finance_data$risk)
+```
+
+
+
+
+
+
+#### budget gap vs risk/no risk
+
+```{r}
+finance_data$budgetgap_noendow[is.infinite(finance_data$budgetgap_noendow)] <- NA
+finance_data$budgetgap_noendow[is.nan(finance_data$budgetgap_noendow)] <- NA
+
+budget <- finance_data %>%
+  filter(!is.na(risk)) %>%
+  filter(!is.na(budgetgap_noendow)) %>%
+  group_by(risk) %>%
+  summarise(avg_budgetgap = mean(budgetgap_noendow))
+
+
+ggplot(data=budget, aes(x=risk, y=avg_budgetgap)) +
+  geom_bar(stat="identity", fill="steelblue")+
+  geom_text(aes(label=round(avg_budgetgap * 100 ,2)), vjust=1.6, color="white", size=3.5)+
+  theme_minimal()
+```
