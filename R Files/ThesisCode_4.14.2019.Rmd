@@ -1,0 +1,493 @@
+---
+title: "Thesis Code"
+author: "Kyle Davis"
+date: "4/13/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.path="images/", results='asis')
+knitr::opts_knit$set(root.dir = "~/Desktop/QMSSClasses/QMSSMAThesis/Datasets")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+setwd("~/Desktop/QMSSClasses/QMSSMAThesis/Datasets")
+library(tidyverse)
+library(stargazer)
+library(magrittr)
+library(qwraps2)
+library(rstanarm)
+library(brms)
+library(bayesplot)
+library(loo)
+```
+
+## NCES Data Cleaning
+
+### Read in Data
+
+#### Setting Path Nodes
+```{r}
+Finance_node <- "NCES/Finance/Data"
+Directory_node <- "NCES/Institutional Characteristics/Directory Information/Data"
+Fall_node <- "NCES/Institutional Characteristics/Fall Enrollment/Data"
+```
+
+#### Read in Finance Datasets
+
+1) Create List of all CSV files in directory
+2) Initialize Dataframe by reading in first file
+3) Create Year Variable to create a unique ID of UNID + year
+4) Loop through all files and repeat
+
+```{r}
+final_node <- as.character(paste(getwd(),Finance_node, sep = "/")) #location of all of the csv files
+
+finance_files <- list.files(path = final_node) #creates a list of all the files in the specified path
+
+path <- as.character(paste(Finance_node,finance_files[[1]], sep = "/")) #1st CSV file location
+
+finance_data <- read.csv(path) #create the dataframe
+
+year <- str_extract_all(finance_files[[length(finance_files)]], pattern = "[0-9]{2}") #Years are specified for each file as #### where the first two numbers are last year and third/fourth number are this year.
+year <- paste0("20",unlist(year)[[2]]) #set year equal to 20xx
+
+finance_data <- finance_data %>%
+  mutate(year = year) #create year variable in finance_dataset
+
+colnames(finance_data) <- tolower(colnames(finance_data))
+
+for(i in 2:length(finance_files)){
+  path <- as.character(paste(Finance_node,finance_files[[i]], sep = "/"))
+  placeholder <- read.csv(path) #create the dataframe
+
+  year <- str_extract_all(finance_files[[i]], pattern = "[0-9]{2}")
+  year <- paste0("20",unlist(year)[[2]])
+  
+  placeholder <- placeholder %>%
+  mutate(year = year)
+  
+  colnames(placeholder) <- tolower(colnames(placeholder))
+  finance_data <- finance_data %>%
+    plyr::rbind.fill(placeholder)
+}
+
+missing_values <- finance_data %>% summarize_all(funs(sum(is.na(.))/n()))
+missing_values <- gather(missing_values, key = "feature", value = "missing_pct")
+missing_values %>%
+  filter(missing_pct > 0.03) %>%
+ggplot(aes(x=reorder(feature,-missing_pct), y = missing_pct)) +
+geom_bar(stat="identity",fill="red")+
+coord_flip()+theme_bw()
+```
+
+#### Selecting Relevent Variables
+
+```{r}
+varlist_path <- paste0(getwd(),"/NCES/Finance/Data Dictionary/Finance_Varlist.xlsx")
+varlist <- readxl::read_xlsx(path = varlist_path, sheet = "VarList")
+
+NCES_varnames <- c(tolower(varlist$varname), 'year')
+
+finance_data <- finance_data %>%
+  dplyr::select_(.dots = NCES_varnames)
+
+colnames(finance_data) <- c(tolower(varlist$tidyName), 'year')
+
+missing_values <- finance_data %>% summarize_all(funs(sum(is.na(.))/n()))
+missing_values <- gather(missing_values, key = "feature", value = "missing_pct")
+missing_values %>%
+  filter(missing_pct > 0.03) %>%
+ggplot(aes(x=reorder(feature,-missing_pct), y = missing_pct)) +
+geom_bar(stat="identity",fill="red")+
+coord_flip()+theme_bw()
+```
+
+
+#### Creating Relevent Vars
+
+
+
+```{r}
+finance_data_reg <- finance_data %>%
+  mutate(gifts_total = private_giftsgrants + contributions, 
+         grants_appr = federal_appropriation + state_appropriations + local_appropriations + federal_grants + state_grants + local_grants) %>% 
+  mutate(other_rev = total_revenues_investmentreturn - investment_return - gifts_total - grants_appr - auxilary_revenue - total_tuitionfees - hospital_revenue) %>%
+  mutate(non_instructional_exp = total_expense - instruction_expense - academicsupport_expense - studentservices_expense) %>%
+  mutate(expense_EG = instruction_expense + academicsupport_expense + studentservices_expense + institutionalsupport_expense + net_grant_aid + research_expense + publicservice_expense) %>%
+  mutate(other_exp = total_expense - instruction_expense - academicsupport_expense - hospital_expense - auxilary_expense - studentservices_expense - interest_expense) %>%
+  mutate(expense_EGK = expense_EG - research_expense - publicservice_expense) %>%
+  mutate(net_tuition_rev = total_tuitionfees) %>%
+  mutate(general_subsidy = expense_EGK - net_tuition_rev - total_studentgrants) %>%
+  select(unitid, general_subsidy, net_tuition_rev, expense_EGK, expense_EG,investment_return, gifts_total, grants_appr, auxilary_revenue, hospital_revenue, other_rev, non_instructional_exp, hospital_expense, interest_expense, other_exp, total_tuitionfees, auxilary_expense, year) %>%
+  mutate(auxilary_revenue = ifelse(is.na(auxilary_revenue), 0, auxilary_revenue)) %>%
+  mutate(auxilary_expense = ifelse(is.na(auxilary_expense), 0, auxilary_expense)) %>%
+  mutate(hospital_revenue = ifelse(is.na(hospital_revenue), 0, hospital_revenue)) %>%
+  mutate(other_rev = ifelse(is.na(other_rev), 0, other_rev)) %>%
+  mutate(other_exp = ifelse(is.na(other_exp), 0, other_exp)) %>%
+  mutate(hospital_expense = ifelse(is.na(hospital_expense), 0, hospital_expense)) %>%
+  mutate(net_aux_rev = auxilary_revenue - auxilary_expense, net_hospital_rev = hospital_revenue - hospital_expense, net_other_rev = other_rev - other_exp)
+
+missing_values <- finance_data_reg %>% summarize_all(funs(sum(is.na(.))/n()))
+missing_values <- gather(missing_values, key = "feature", value = "missing_pct")
+missing_values %>%
+  filter(missing_pct > 0.03) %>%
+ggplot(aes(x=reorder(feature,-missing_pct), y = missing_pct)) +
+geom_bar(stat="identity",fill="red")+
+coord_flip()+theme_bw()
+```
+
+
+### final finance dataset
+
+```{r}
+final_finance <- finance_data_reg %>%
+  na.omit()
+```
+
+
+### Getting Enrollment Numbers
+
+```{r}
+final_node <- as.character(paste(getwd(),Fall_node, sep = "/")) #location of all of the csv files
+
+FTE_files <- list.files(path = final_node) #creates a list of all the files in the specified path
+
+path <- as.character(paste(Fall_node,FTE_files[[1]], sep = "/")) #1st CSV file location
+
+FTE_data <- read.csv(path) #create the dataframe
+
+year <- str_extract_all(FTE_files[[length(FTE_files)]], pattern = "[0-9]{4}") #Years are specified for each file as #### where the first two numbers are last year and third/fourth number are this year.
+
+FTE_data <- FTE_data %>%
+  mutate(year = unlist(year)) #create year variable in finance_dataset
+
+colnames(FTE_data) <- tolower(colnames(FTE_data))
+
+for(i in 2:length(FTE_files)){
+  path <- as.character(paste(Fall_node,FTE_files[[i]], sep = "/"))
+  placeholder <- read.csv(path) #create the dataframe
+
+  year <- str_extract_all(FTE_files[[i]], pattern = "[0-9]{4}")
+  
+  placeholder <- placeholder %>%
+  mutate(year = unlist(year))
+  
+  colnames(placeholder) <- tolower(colnames(placeholder))
+  FTE_data <- FTE_data %>%
+    plyr::rbind.fill(placeholder)
+}
+
+missing_values <- FTE_data %>% summarize_all(funs(sum(is.na(.))/n()))
+missing_values <- gather(missing_values, key = "feature", value = "missing_pct")
+missing_values %>%
+  filter(missing_pct > 0.03) %>%
+ggplot(aes(x=reorder(feature,-missing_pct), y = missing_pct)) +
+geom_bar(stat="identity",fill="red")+
+coord_flip()+theme_bw()
+```
+
+### Selecting total enrollment
+```{r}
+FTE_data <- FTE_data %>%
+  select(unitid, efrace24, eftotlt, year, efalevel) %>%
+  filter(efalevel == 1) %>%
+  mutate(FTE = ifelse(is.na(efrace24), eftotlt, efrace24)) %>%
+  group_by(unitid, year) %>%
+  summarise(Total_FTE = sum(FTE))
+
+missing_values <- FTE_data %>% summarize_all(funs(sum(is.na(.))/n()))
+missing_values <- gather(missing_values, key = "feature", value = "missing_pct")
+missing_values %>%
+  filter(missing_pct > 0.03) %>%
+ggplot(aes(x=reorder(feature,-missing_pct), y = missing_pct)) +
+geom_bar(stat="identity",fill="red")+
+coord_flip()+theme_bw()
+```
+
+
+### Merge two dataframes
+```{r}
+final_regdata <- final_finance %>%
+  left_join(FTE_data, by = c("unitid","year")) %>%
+  na.omit()
+```
+
+### Convert Data to per FTE
+```{r}
+final_regdata_FTE <- final_regdata
+final_regdata_FTE[,!(colnames(final_regdata) %in% c("unitid","year","Total_FTE"))] <- final_regdata[,!(colnames(final_regdata) %in% c("unitid","year","Total_FTE"))] / final_regdata$Total_FTE 
+final_regdata_FTE <- final_regdata_FTE %>%
+  filter(Total_FTE > 500)
+```
+
+
+### Get Institution Names and Get Level of institution (will only keep 4 year or more institutions)
+
+```{r}
+final_node <- as.character(paste(getwd(),Directory_node, sep = "/")) #location of all of the csv files
+
+Directory_files <- list.files(path = final_node) #creates a list of all the files in the specified path
+
+path <- as.character(paste(Directory_node,Directory_files[[1]], sep = "/")) #1st CSV file location
+
+Directory_data <- read.csv(path, encoding = "UTF-8") #create the dataframe
+
+year <- str_extract_all(Directory_files[[length(Directory_files)]], pattern = "[0-9]{4}") #Years are specified for each file as #### where the first two numbers are last year and third/fourth number are this year.
+
+Directory_data <- Directory_data %>%
+  mutate(year = unlist(year)) #create year variable in finance_dataset
+
+colnames(Directory_data) <- tolower(colnames(Directory_data))
+
+for(i in 2:length(Directory_files)){
+  path <- as.character(paste(Directory_node,Directory_files[[i]], sep = "/"))
+  placeholder <- read.csv(path, encoding = "UTF-8") #create the dataframe
+
+  year <- str_extract_all(Directory_files[[i]], pattern = "[0-9]{4}")
+  
+  placeholder <- placeholder %>%
+  mutate(year = unlist(year))
+  
+  colnames(placeholder) <- tolower(colnames(placeholder))
+  Directory_data <- Directory_data %>%
+    plyr::rbind.fill(placeholder)
+}
+
+Directory_data <- Directory_data %>%
+  select(unitid, instnm, iclevel, year)
+```
+
+### Merge to existing dataframe
+
+```{r}
+final_regdata <- final_regdata %>%
+  left_join(Directory_data, by = c("unitid","year")) %>%
+  filter(iclevel == 1) %>%
+  mutate(instnm = as.character(instnm)) %>%
+  filter(!str_detect(tolower(instnm), "(medical)|(medicine)"))
+
+final_regdata_FTE <- final_regdata_FTE %>%
+  left_join(Directory_data, by = c("unitid","year")) %>%
+  mutate(instnm = tolower(as.character(instnm))) %>%
+  filter(iclevel == 1) %>%
+  filter(!str_detect(tolower(as.character(instnm)), "(medical)|(medicine)"))
+```
+
+### A few plots
+
+#### DV - General Subsidy
+
+##### Density Plot
+```{r}
+ggplot(final_regdata_FTE, aes(x=general_subsidy)) + 
+ geom_histogram(aes(y=..density..), colour="black", fill="white")+
+ geom_density(alpha=.2, fill="#FF6666") 
+```
+
+
+```{r , fig.height = 30, fig.width = 18, fig.align = "center"}
+ggplot(final_regdata_FTE, aes(x=general_subsidy, color=year, fill=year)) + 
+ geom_histogram(aes(y=..density..), alpha=0.5, 
+                position="identity")+
+ geom_density(alpha=.2) + facet_grid(year ~ .)
+```
+
+
+```{r results='asis'}
+table1::table1(~general_subsidy, data = final_regdata_FTE)
+
+table1::table1(~general_subsidy|year, data=final_regdata_FTE)
+```
+
+
+```{r}
+ggplot(final_regdata_FTE, aes(x=non_instructional_exp, y=general_subsidy, color=year)) +
+  geom_point() +
+  geom_smooth()
+```
+
+
+## Building Models
+
+### Model 1: Gen_subsidy ~ 1 + B*investment_ret + e
+```{r}
+myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b"), prior(cauchy(0,1), class = "sigma"))
+
+model1 <- brm(data = final_regdata_FTE, family = gaussian, formula = general_subsidy ~ 1 + investment_return, prior = myprior, chains = 4, cores = 4)
+```
+
+
+```{r}
+plot(model1)
+```
+
+```{r}
+summary(model1)
+```
+
+```{r}
+posterior_samples(model1) %>%
+  select(-lp__) %>%
+  cor() %>%
+  round(digits = 2)
+```
+
+
+```{r}
+final_regdata_FTE %>%
+  ggplot(aes(x = investment_return, y = general_subsidy)) +
+  geom_abline(intercept = fixef(model1)[1], 
+              slope     = fixef(model1)[2]) +
+  geom_point(shape = 1, size = 2, color = "royalblue") +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+```
+
+```{r}
+loo_model1 <- loo(model1, save_psis = TRUE)
+print(loo_model1)
+plot(loo_model1)
+
+if (any(pareto_k_values(loo_model1) > 0.7)) {
+  loo_model1 <- loo(model1, k_threshold = 0.7, reloo = TRUE)
+}
+
+loo_model1
+```
+
+```{r}
+if (any(pareto_k_values(loo_model1) > 0.7)) {
+  loo_model1 <- loo(model1, k_threshold = 0.7, reloo = TRUE)
+}
+```
+
+
+### Model 2 - adding non_instructional_exp
+```{r}
+myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b", coef = "investment_return"), prior(cauchy(0,1), class = "sigma"), prior(normal(0,5), class = "b", coef = "non_instructional_exp"))
+
+model2 <- brm(data = final_regdata_FTE, family = gaussian, formula = general_subsidy ~ 1 + investment_return + non_instructional_exp, prior = myprior, chains = 4, cores = 4)
+```
+
+```{r}
+plot(model2)
+```
+
+```{r}
+loo_model2 <- loo(model2, save_psis = TRUE)
+
+# requires bayesplot version >= 1.5.0
+if (any(pareto_k_values(loo_model2) > 0.7)) {
+  loo_model2 <- loo(model2, k_threshold = 0.7, reloo = TRUE)
+}
+```
+
+
+### Comparing 1 and 2
+```{r}
+compare_models(loo_model1, loo_model2)
+```
+
+### Model 3 - adding year
+```{r}
+final_regdata_FTE <- final_regdata_FTE %>%
+  mutate(year = as.factor(year))
+
+myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b", coef = "investment_return"), prior(cauchy(0,1), class = "sigma"), prior(normal(0,5), class = "b", coef = "non_instructional_exp"), prior(normal(0,1), class = "b", coef = "year2005"), prior(normal(0,1), class = "b", coef = "year2007"), prior(normal(0,1), class = "b", coef = "year2008"), prior(normal(0,1), class = "b", coef = "year2009"), prior(normal(0,1), class = "b", coef = "year2010"), prior(normal(0,1), class = "b", coef = "year2011"), prior(normal(0,1), class = "b", coef = "year2012"), prior(normal(0,1), class = "b", coef = "year2013"), prior(normal(0,1), class = "b", coef = "year2014"), prior(normal(0,1), class = "b", coef = "year2015"))
+
+model3 <- brm(data = final_regdata_FTE, family = gaussian, formula = general_subsidy ~ 1 + investment_return + non_instructional_exp + year, prior = myprior, chains = 4, cores = 4)
+```
+
+```{r}
+plot(model3)
+```
+
+```{r}
+loo_model3 <- loo(model3, save_psis = TRUE)
+print(loo_model3)
+plot(loo_model3)
+
+yrep <- posterior_predict(model3)
+
+# requires bayesplot version >= 1.5.0
+ppc_loo_pit_overlay(
+  y = final_regdata_FTE$general_subsidy,
+  yrep = yrep,
+  lw = weights(loo_model3$psis_object)
+)
+```
+
+
+```{r}
+if (any(pareto_k_values(loo_model3) > 0.7)) {
+  loo_model3 <- loo(model3, save_psis = TRUE, k_threshold = 0.7)
+}
+```
+### Model 4 - adding more granular E&G activities
+```{r}
+myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b", coef = "investment_return"), prior(cauchy(0,1), class = "sigma"), prior(normal(0,5), class = "b", coef = "non_instructional_exp"), prior(normal(0,1), class = "b", coef = "year2005"), prior(normal(0,1), class = "b", coef = "year2007"), prior(normal(0,1), class = "b", coef = "year2008"), prior(normal(0,1), class = "b", coef = "year2009"), prior(normal(0,1), class = "b", coef = "year2010"), prior(normal(0,1), class = "b", coef = "year2011"), prior(normal(0,1), class = "b", coef = "year2012"), prior(normal(0,1), class = "b", coef = "year2013"), prior(normal(0,1), class = "b", coef = "year2014"), prior(normal(0,1), class = "b", coef = "year2015"), prior(normal(0,5), class = "b", coef = "gifts_total"), prior(normal(0,5), class = "b", coef = "grants_appr"), prior(normal(0,1), class = "b", coef = "net_aux_rev"), prior(normal(0,10), class = "b", coef = "net_hospital_rev"), prior(normal(0,0.5), class = "b", coef = "net_other_rev"))
+
+model4 <- brm(data = final_regdata_FTE, family = gaussian, formula = general_subsidy ~ 1 + investment_return + non_instructional_exp + year + gifts_total + grants_appr + net_aux_rev + net_hospital_rev + net_other_rev, prior = myprior, chains = 4, cores = 4)
+```
+
+```{r}
+plot(model4)
+```
+
+
+```{r}
+loo_model4 <- loo(model4, save_psis = TRUE)
+print(loo_model4)
+plot(loo_model4)
+
+yrep <- posterior_predict(model4)
+
+# requires bayesplot version >= 1.5.0
+ppc_loo_pit_overlay(
+  y = final_regdata_FTE$general_subsidy,
+  yrep = yrep,
+  lw = weights(loo_model4$psis_object)
+)
+```
+
+```{r}
+summary(model5)
+```
+
+
+### Model 5
+```{r}
+myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b", coef = "investment_return"), prior(cauchy(0,1), class = "sigma"), prior(normal(0,5), class = "b", coef = "non_instructional_exp"), prior(normal(0,5), class = "b", coef = "gifts_total"), prior(normal(0,5), class = "b", coef = "grants_appr"), prior(normal(0,1), class = "b", coef = "net_aux_rev"), prior(normal(0,10), class = "b", coef = "net_hospital_rev"), prior(normal(0,0.5), class = "b", coef = "net_other_rev"))
+
+model5 <- brm(data = final_regdata_FTE, family = gaussian, formula = general_subsidy ~ 1 + investment_return + non_instructional_exp + gifts_total + grants_appr + net_aux_rev + net_hospital_rev + net_other_rev, prior = myprior, chains = 4, cores = 4)
+```
+
+
+### Model Comparison and checking shape parameters of the pareto distribution
+
+```{r}
+library(loo)
+
+plot(loo(model1))
+
+plot(loo(model2))
+
+plot(loo(model3))
+
+plot(loo(model4))
+
+plot(loo(model5))
+```
+
+
+```{r}
+compare_models(loo(model1), loo(model2))
+
+compare_models(loo(model2), loo(model3))
+
+compare_models(loo(model3), loo(model4))
+
+compare_models(loo(model4), loo(model5))
+
+```
