@@ -452,7 +452,7 @@ ppc_loo_pit_overlay(
 ```
 
 ```{r}
-summary(model5)
+summary(model4)
 ```
 
 
@@ -461,6 +461,8 @@ summary(model5)
 myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b", coef = "investment_return"), prior(cauchy(0,1), class = "sigma"), prior(normal(0,5), class = "b", coef = "non_instructional_exp"), prior(normal(0,5), class = "b", coef = "gifts_total"), prior(normal(0,5), class = "b", coef = "grants_appr"), prior(normal(0,1), class = "b", coef = "net_aux_rev"), prior(normal(0,10), class = "b", coef = "net_hospital_rev"), prior(normal(0,0.5), class = "b", coef = "net_other_rev"))
 
 model5 <- brm(data = final_regdata_FTE, family = gaussian, formula = general_subsidy ~ 1 + investment_return + non_instructional_exp + gifts_total + grants_appr + net_aux_rev + net_hospital_rev + net_other_rev, prior = myprior, chains = 4, cores = 4)
+
+summary(model5)
 ```
 
 
