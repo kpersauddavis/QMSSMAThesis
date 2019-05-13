@@ -276,17 +276,30 @@ final_regdata_FTE <- final_regdata_FTE %>%
 
 ### A few plots
 
+### Number of institutions in each year
+
+```{r num_inst}
+final_regdata_FTE %>%
+  group_by(year) %>%
+  summarise(count = n()) %>%
+ggplot(aes(x=year, y=count)) +
+  geom_bar(stat="identity", fill="steelblue")+
+  geom_text(aes(label=count), vjust=1.6, color="white", size=3.5)+
+  theme_minimal() + labs(title = "Number of Instiutions by Year")
+
+```
+
 #### DV - General Subsidy
 
 ##### Density Plot
-```{r}
+```{r General Susbidy Distribution}
 ggplot(final_regdata_FTE, aes(x=general_subsidy)) + 
  geom_histogram(aes(y=..density..), colour="black", fill="white")+
- geom_density(alpha=.2, fill="#FF6666") 
+ geom_density(alpha=.2, fill="#FF6666") + labs(title = "General Subsidy Distribution", x = "General Subsidy Level", y= "Density")
 ```
 
 
-```{r , fig.height = 30, fig.width = 18, fig.align = "center"}
+```{r general_subsidy_density, fig.height = 30, fig.width = 18, fig.align = "center"}
 ggplot(final_regdata_FTE, aes(x=general_subsidy, color=year, fill=year)) + 
  geom_histogram(aes(y=..density..), alpha=0.5, 
                 position="identity")+
@@ -294,7 +307,7 @@ ggplot(final_regdata_FTE, aes(x=general_subsidy, color=year, fill=year)) +
 ```
 
 
-```{r results='asis'}
+```{r general_subsidy_summary, results='asis'}
 table1::table1(~general_subsidy, data = final_regdata_FTE)
 
 table1::table1(~general_subsidy|year, data=final_regdata_FTE)
@@ -311,22 +324,22 @@ ggplot(final_regdata_FTE, aes(x=non_instructional_exp, y=general_subsidy, color=
 ## Building Models
 
 ### Model 1: Gen_subsidy ~ 1 + B*investment_ret + e
-```{r}
-myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b"), prior(cauchy(0,1), class = "sigma"))
+```{r cache=TRUE}
+myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b"), prior(cauchy(0,1), class = "sigma"), prior(gamma(4,1), class = "nu"))
 
-model1 <- brm(data = final_regdata_FTE, family = gaussian, formula = general_subsidy ~ 1 + investment_return, prior = myprior, chains = 4, cores = 4)
+model1 <- brm(data = final_regdata_FTE, family = student, formula = general_subsidy ~ 1 + investment_return, prior = myprior, chains = 4, cores = 4)
 ```
 
 
-```{r}
+```{r model1_plot}
 plot(model1)
 ```
 
-```{r}
+```{r model1_summary}
 summary(model1)
 ```
 
-```{r}
+```{r modle1_corr}
 posterior_samples(model1) %>%
   select(-lp__) %>%
   cor() %>%
@@ -356,22 +369,18 @@ if (any(pareto_k_values(loo_model1) > 0.7)) {
 loo_model1
 ```
 
-```{r}
-if (any(pareto_k_values(loo_model1) > 0.7)) {
-  loo_model1 <- loo(model1, k_threshold = 0.7, reloo = TRUE)
-}
-```
 
 
 ### Model 2 - adding non_instructional_exp
 ```{r}
-myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b", coef = "investment_return"), prior(cauchy(0,1), class = "sigma"), prior(normal(0,5), class = "b", coef = "non_instructional_exp"))
+myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b", coef = "investment_return"), prior(cauchy(0,1), class = "sigma"), prior(normal(0,5), class = "b", coef = "non_instructional_exp"), prior(gamma(4,1), class = "nu"))
 
-model2 <- brm(data = final_regdata_FTE, family = gaussian, formula = general_subsidy ~ 1 + investment_return + non_instructional_exp, prior = myprior, chains = 4, cores = 4)
+model2 <- brm(data = final_regdata_FTE, family = student, formula = general_subsidy ~ 1 + investment_return + non_instructional_exp, prior = myprior, chains = 4, cores = 4)
 ```
 
-```{r}
+```{r model2_plots}
 plot(model2)
+summary(model2)
 ```
 
 ```{r}
@@ -381,12 +390,14 @@ loo_model2 <- loo(model2, save_psis = TRUE)
 if (any(pareto_k_values(loo_model2) > 0.7)) {
   loo_model2 <- loo(model2, k_threshold = 0.7, reloo = TRUE)
 }
+
+plot(loo_model2)
 ```
 
 
 ### Comparing 1 and 2
 ```{r}
-compare_models(loo_model1, loo_model2)
+loo_compare(loo_model1, loo_model2)
 ```
 
 ### Model 3 - adding year
@@ -394,16 +405,16 @@ compare_models(loo_model1, loo_model2)
 final_regdata_FTE <- final_regdata_FTE %>%
   mutate(year = as.factor(year))
 
-myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b", coef = "investment_return"), prior(cauchy(0,1), class = "sigma"), prior(normal(0,5), class = "b", coef = "non_instructional_exp"), prior(normal(0,1), class = "b", coef = "year2005"), prior(normal(0,1), class = "b", coef = "year2007"), prior(normal(0,1), class = "b", coef = "year2008"), prior(normal(0,1), class = "b", coef = "year2009"), prior(normal(0,1), class = "b", coef = "year2010"), prior(normal(0,1), class = "b", coef = "year2011"), prior(normal(0,1), class = "b", coef = "year2012"), prior(normal(0,1), class = "b", coef = "year2013"), prior(normal(0,1), class = "b", coef = "year2014"), prior(normal(0,1), class = "b", coef = "year2015"))
+myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b", coef = "investment_return"), prior(cauchy(0,1), class = "sigma"), prior(normal(0,5), class = "b", coef = "non_instructional_exp"), prior(normal(0,1), class = "b", coef = "year2005"), prior(normal(0,1), class = "b", coef = "year2007"), prior(normal(0,1), class = "b", coef = "year2008"), prior(normal(0,1), class = "b", coef = "year2009"), prior(normal(0,1), class = "b", coef = "year2010"), prior(normal(0,1), class = "b", coef = "year2011"), prior(normal(0,1), class = "b", coef = "year2012"), prior(normal(0,1), class = "b", coef = "year2013"), prior(normal(0,1), class = "b", coef = "year2014"), prior(normal(0,1), class = "b", coef = "year2015"), prior(gamma(4,1), class = "nu"))
 
-model3 <- brm(data = final_regdata_FTE, family = gaussian, formula = general_subsidy ~ 1 + investment_return + non_instructional_exp + year, prior = myprior, chains = 4, cores = 4)
+model3 <- brm(data = final_regdata_FTE, family = student, formula = general_subsidy ~ 1 + investment_return + non_instructional_exp + year, prior = myprior, chains = 4, cores = 4)
 ```
 
-```{r}
+```{r model3_plots}
 plot(model3)
 ```
 
-```{r}
+```{r model3_loo}
 loo_model3 <- loo(model3, save_psis = TRUE)
 print(loo_model3)
 plot(loo_model3)
@@ -420,15 +431,13 @@ ppc_loo_pit_overlay(
 
 
 ```{r}
-if (any(pareto_k_values(loo_model3) > 0.7)) {
-  loo_model3 <- loo(model3, save_psis = TRUE, k_threshold = 0.7)
-}
+summary(model3)
 ```
 ### Model 4 - adding more granular E&G activities
 ```{r}
-myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b", coef = "investment_return"), prior(cauchy(0,1), class = "sigma"), prior(normal(0,5), class = "b", coef = "non_instructional_exp"), prior(normal(0,1), class = "b", coef = "year2005"), prior(normal(0,1), class = "b", coef = "year2007"), prior(normal(0,1), class = "b", coef = "year2008"), prior(normal(0,1), class = "b", coef = "year2009"), prior(normal(0,1), class = "b", coef = "year2010"), prior(normal(0,1), class = "b", coef = "year2011"), prior(normal(0,1), class = "b", coef = "year2012"), prior(normal(0,1), class = "b", coef = "year2013"), prior(normal(0,1), class = "b", coef = "year2014"), prior(normal(0,1), class = "b", coef = "year2015"), prior(normal(0,5), class = "b", coef = "gifts_total"), prior(normal(0,5), class = "b", coef = "grants_appr"), prior(normal(0,1), class = "b", coef = "net_aux_rev"), prior(normal(0,10), class = "b", coef = "net_hospital_rev"), prior(normal(0,0.5), class = "b", coef = "net_other_rev"))
+myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b", coef = "investment_return"), prior(cauchy(0,1), class = "sigma"), prior(normal(0,5), class = "b", coef = "non_instructional_exp"), prior(normal(0,1), class = "b", coef = "year2005"), prior(normal(0,1), class = "b", coef = "year2007"), prior(normal(0,1), class = "b", coef = "year2008"), prior(normal(0,1), class = "b", coef = "year2009"), prior(normal(0,1), class = "b", coef = "year2010"), prior(normal(0,1), class = "b", coef = "year2011"), prior(normal(0,1), class = "b", coef = "year2012"), prior(normal(0,1), class = "b", coef = "year2013"), prior(normal(0,1), class = "b", coef = "year2014"), prior(normal(0,1), class = "b", coef = "year2015"), prior(normal(0,5), class = "b", coef = "gifts_total"), prior(normal(0,5), class = "b", coef = "grants_appr"), prior(normal(0,1), class = "b", coef = "net_aux_rev"), prior(normal(0,10), class = "b", coef = "net_hospital_rev"), prior(normal(0,0.5), class = "b", coef = "net_other_rev"), prior(gamma(4,1), class = "nu"))
 
-model4 <- brm(data = final_regdata_FTE, family = gaussian, formula = general_subsidy ~ 1 + investment_return + non_instructional_exp + year + gifts_total + grants_appr + net_aux_rev + net_hospital_rev + net_other_rev, prior = myprior, chains = 4, cores = 4)
+model4 <- brm(data = final_regdata_FTE, family = student, formula = general_subsidy ~ 1 + investment_return + non_instructional_exp + year + gifts_total + grants_appr + net_aux_rev + net_hospital_rev + net_other_rev, prior = myprior, chains = 4, cores = 4)
 ```
 
 ```{r}
@@ -440,6 +449,10 @@ plot(model4)
 loo_model4 <- loo(model4, save_psis = TRUE)
 print(loo_model4)
 plot(loo_model4)
+
+if (any(pareto_k_values(loo_model4) > 0.7)) {
+  loo_model4 <- loo(model4, save_psis = TRUE, k_threshold = 0.7)
+}
 
 yrep <- posterior_predict(model4)
 
@@ -458,38 +471,64 @@ summary(model4)
 
 ### Model 5
 ```{r}
-myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b", coef = "investment_return"), prior(cauchy(0,1), class = "sigma"), prior(normal(0,5), class = "b", coef = "non_instructional_exp"), prior(normal(0,5), class = "b", coef = "gifts_total"), prior(normal(0,5), class = "b", coef = "grants_appr"), prior(normal(0,1), class = "b", coef = "net_aux_rev"), prior(normal(0,10), class = "b", coef = "net_hospital_rev"), prior(normal(0,0.5), class = "b", coef = "net_other_rev"))
+myprior <- c(prior(normal(0, 10000), class = "Intercept"), prior(normal(0,5), class = "b", coef = "investment_return"), prior(cauchy(0,1), class = "sigma"), prior(normal(0,5), class = "b", coef = "non_instructional_exp"), prior(normal(0,5), class = "b", coef = "gifts_total"), prior(normal(0,5), class = "b", coef = "grants_appr"), prior(normal(0,1), class = "b", coef = "net_aux_rev"), prior(normal(0,10), class = "b", coef = "net_hospital_rev"), prior(normal(0,0.5), class = "b", coef = "net_other_rev"), prior(gamma(4,1), class = "nu"))
 
-model5 <- brm(data = final_regdata_FTE, family = gaussian, formula = general_subsidy ~ 1 + investment_return + non_instructional_exp + gifts_total + grants_appr + net_aux_rev + net_hospital_rev + net_other_rev, prior = myprior, chains = 4, cores = 4)
+model5 <- brm(data = final_regdata_FTE, family = student, formula = general_subsidy ~ 1 + investment_return + non_instructional_exp + gifts_total + grants_appr + net_aux_rev + net_hospital_rev + net_other_rev, prior = myprior, chains = 4, cores = 4)
 
 summary(model5)
+
+loo_model5 <- loo(model5, save_psis = TRUE)
+print(loo_model5)
+
+
+if (any(pareto_k_values(loo_model5) > 0.7)) {
+  loo_model5 <- loo(model5, save_psis = TRUE, k_threshold = 0.7)
+}
+
+yrep <- posterior_predict(model5)
+
+# requires bayesplot version >= 1.5.0
+ppc_loo_pit_overlay(
+  y = final_regdata_FTE$general_subsidy,
+  yrep = yrep,
+  lw = weights(loo_model5$psis_object)
+)
+
+plot(loo_model5)
 ```
 
 
 ### Model Comparison and checking shape parameters of the pareto distribution
 
+
+
 ```{r}
-library(loo)
+loo_compare(loo_model1, loo_model2, loo_model3, loo_model4, loo_model5)
 
-plot(loo(model1))
+```
 
-plot(loo(model2))
+### Projection Pursuit
 
-plot(loo(model3))
+```{r}
+library(projpred)
 
-plot(loo(model4))
+fit_vs <- varsel(model5)
 
-plot(loo(model5))
+varsel_plot(fit_vs, stats = c('elpd','rmse'))
 ```
 
 
 ```{r}
-compare_models(loo(model1), loo(model2))
+cvs <- cv_varsel(model5, method = 'forward', verbose = FALSE)
 
-compare_models(loo(model2), loo(model3))
+suggest_size(cvs)
 
-compare_models(loo(model3), loo(model4))
+varsel_plot(cvs, stats = c('elpd','rmse'), deltas =TRUE)
+```
 
-compare_models(loo(model4), loo(model5))
+### Vizualising the Submodel
 
+```{r}
+mcmc_areas(as.matrix(project(fit_vs, nv =1)),
+           pars = c('(Intercept)', names(fit_vs$vind[1]),'sigma'))
 ```
